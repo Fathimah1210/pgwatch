@@ -1,65 +1,67 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
+	"time"
 
-	"github.com/cybertec-postgresql/pgwatch/v3/api"
-	"github.com/destrex271/pgwatch3_rpc_server/sinks"
+	"github.com/cybertec-postgresql/pgwatch/v3/internal/auth"
+	"github.com/cybertec-postgresql/pgwatch/v3/sinks"
 )
 
-// AuthenticatedWrapper wraps a Receiver with authentication
 type AuthenticatedWrapper struct {
-	Receiver sinks.Receiver
-	Token    string
+	receiver sinks.Receiver
+	tm       *auth.TokenManager
+	logger   *log.Logger
+	timeout  time.Duration
 }
 
-// Create a new authenticated wrapper for a receiver
 func NewAuthenticatedWrapper(receiver sinks.Receiver, token string) *AuthenticatedWrapper {
+	tm := auth.GetTokenManager()
+	if token != "" {
+		tm.AddToken(token) // Add initial token
+	}
+	
 	return &AuthenticatedWrapper{
-		Receiver: receiver,
-		Token:    token,
+		receiver: receiver,
+		tm:       tm,
+		logger:   log.Default(),
+		timeout:  5 * time.Second,
 	}
 }
 
-// Implement the UpdateMeasurements method with authentication
-func (wrapper *AuthenticatedWrapper) UpdateMeasurements(req *sinks.AuthRequest, logMsg *string) error {
-	// Verify token
-	if req.Token != wrapper.Token {
-		*logMsg = "Authentication failed: invalid token"
-		log.Println("[ERROR]: Authentication failed - invalid token")
-		return errors.New("authentication failed: invalid token")
+func (aw *AuthenticatedWrapper) UpdateMeasurements(req *sinks.AuthRequest, logMsg *string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), aw.timeout)
+	defer cancel()
+
+	if !aw.tm.IsTokenValid(req.Token) {
+		aw.logger.Printf("Invalid token attempt from client")
+		return errors.New("authentication failed")
 	}
 
-	// Extract the actual measurement envelope
-	msg, ok := req.Data.(api.MeasurementEnvelope)
-	if !ok {
-		*logMsg = "Invalid data format"
-		log.Println("[ERROR]: Invalid data format")
-		return errors.New("invalid data format")
+	select {
+	case err := <-aw.callReceiverAsync(req, logMsg):
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-
-	// Forward to the actual receiver
-	return wrapper.Receiver.UpdateMeasurements(&msg, logMsg)
 }
 
-// Implement the SyncMetric method with authentication
-func (wrapper *AuthenticatedWrapper) SyncMetric(req *sinks.AuthRequest, logMsg *string) error {
-	// Verify token
-	if req.Token != wrapper.Token {
-		*logMsg = "Authentication failed: invalid token"
-		log.Println("[ERROR]: Authentication failed - invalid token")
-		return errors.New("authentication failed: invalid token")
-	}
+func (aw *AuthenticatedWrapper) callReceiverAsync(req *sinks.AuthRequest, logMsg *string) <-chan error {
+	errChan := make(chan error, 1)
+	
+	go func() {
+		defer close(errChan)
+		
+		msg, ok := req.Data.(sinks.MeasurementMessage)
+		if !ok {
+			errChan <- errors.New("invalid data format")
+			return
+		}
 
-	// Extract the actual sync request
-	syncReq, ok := req.Data.(api.RPCSyncRequest)
-	if !ok {
-		*logMsg = "Invalid data format"
-		log.Println("[ERROR]: Invalid data format")
-		return errors.New("invalid data format")
-	}
-
-	// Forward to the actual receiver
-	return wrapper.Receiver.SyncMetric(&syncReq, logMsg)
+		errChan <- aw.receiver.UpdateMeasurements(&msg, logMsg)
+	}()
+	
+	return errChan
 }
