@@ -2,14 +2,15 @@ package sinks
 
 import (
 	"context"
+	"errors"
 	"net/rpc"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/cybertec-postgresql/pgwatch/v3/log"
-	"github.com/cybertec-postgresql/pgwatch/v3/metrics"
-	"github.com/cybertec-postgresql/pgwatch/v3/internal/auth"
+	"github.com/cybertec-postgresql/pgwatch/v3/internal/auth_helper"
+	"github.com/cybertec-postgresql/pgwatch/v3/internal/log"
+	"github.com/cybertec-postgresql/pgwatch/v3/internal/metrics"
 )
 
 const (
@@ -34,7 +35,6 @@ type RPCWriter struct {
 }
 
 func NewRPCWriter(ctx context.Context, address string) (*RPCWriter, error) {
-	// Parse address (supports rpc://token@host:port format)
 	u, err := url.Parse(address)
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func (rw *RPCWriter) Write(msgs []metrics.MeasurementMessage) error {
 	defer rw.client.Close()
 
 	for _, msg := range msgs {
-		authReq := AuthRequest{
+		authReq := auth_helper.AuthRequest{
 			Token: rw.config.Token,
 			Data:  msg,
 		}
@@ -106,7 +106,6 @@ func (rw *RPCWriter) Write(msgs []metrics.MeasurementMessage) error {
 }
 
 func shouldRetry(err error) bool {
-	// Implement logic to determine if error is retryable
 	return strings.Contains(err.Error(), "connection refused") || 
 	       strings.Contains(err.Error(), "timeout")
 }

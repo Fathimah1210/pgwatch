@@ -1,4 +1,4 @@
-package main
+package auth_helper
 
 import (
 	"context"
@@ -7,8 +7,13 @@ import (
 	"time"
 
 	"github.com/cybertec-postgresql/pgwatch/v3/internal/auth"
-	"github.com/cybertec-postgresql/pgwatch/v3/sinks"
+	"github.com/cybertec-postgresql/pgwatch/v3/internal/sinks"
 )
+
+type AuthRequest struct {
+    Token string      `json:"token"`
+    Data  interface{} `json:"data"`
+}
 
 type AuthenticatedWrapper struct {
 	receiver sinks.Receiver
@@ -31,7 +36,7 @@ func NewAuthenticatedWrapper(receiver sinks.Receiver, token string) *Authenticat
 	}
 }
 
-func (aw *AuthenticatedWrapper) UpdateMeasurements(req *sinks.AuthRequest, logMsg *string) error {
+func (aw *AuthenticatedWrapper) UpdateMeasurements(req *AuthRequest, logMsg *string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), aw.timeout)
 	defer cancel()
 
@@ -48,7 +53,7 @@ func (aw *AuthenticatedWrapper) UpdateMeasurements(req *sinks.AuthRequest, logMs
 	}
 }
 
-func (aw *AuthenticatedWrapper) callReceiverAsync(req *sinks.AuthRequest, logMsg *string) <-chan error {
+func (aw *AuthenticatedWrapper) callReceiverAsync(req *AuthRequest, logMsg *string) <-chan error {
 	errChan := make(chan error, 1)
 	
 	go func() {

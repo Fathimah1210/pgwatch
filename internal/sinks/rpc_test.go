@@ -9,19 +9,19 @@ import (
 	"net/rpc"
 	"testing"
 
-	"github.com/cybertec-postgresql/pgwatch/v3/metrics"
-	"github.com/cybertec-postgresql/pgwatch/v3/sinks"
+	"github.com/cybertec-postgresql/pgwatch/v3/internal/auth_helper"
+	"github.com/cybertec-postgresql/pgwatch/v3/internal/metrics"
+	"github.com/cybertec-postgresql/pgwatch/v3/internal/sinks"
 	"github.com/stretchr/testify/assert"
 )
 
 const validToken = "test_token"
 
-type Receiver struct {
-}
+type Receiver struct{}
 
 var ctxt = context.Background()
 
-func (receiver *Receiver) UpdateMeasurements(req *sinks.AuthRequest, logMsg *string) error {
+func (receiver *Receiver) UpdateMeasurements(req *auth_helper.AuthRequest, logMsg *string) error {
 	if req.Token != validToken {
 		return errors.New("invalid token")
 	}
@@ -39,7 +39,7 @@ func (receiver *Receiver) UpdateMeasurements(req *sinks.AuthRequest, logMsg *str
 	return nil
 }
 
-func (receiver *Receiver) SyncMetric(req *sinks.AuthRequest, logMsg *string) error {
+func (receiver *Receiver) SyncMetric(req *auth_helper.AuthRequest, logMsg *string) error {
 	if req.Token != validToken {
 		return errors.New("invalid token")
 	}
