@@ -2,13 +2,14 @@ package sinks
 
 import (
 	"context"
+	"encoding/gob"
 	"errors"
 	"net/rpc"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/cybertec-postgresql/pgwatch/v3/internal/log"
+	//"github.com/cybertec-postgresql/pgwatch/v3/internal/log"
 	"github.com/cybertec-postgresql/pgwatch/v3/internal/metrics"
 	"github.com/cybertec-postgresql/pgwatch/v3/internal/rpc/models"
 )
@@ -39,6 +40,23 @@ type RPCWriter struct {
 	config   RPCConfig
 	client   *rpc.Client
 	stopChan chan struct{}
+}
+
+// Register types with gob for serialization
+func init() {
+	// Register basic types
+	gob.Register(map[string]interface{}{})
+	gob.Register([]interface{}{})
+	gob.Register([]map[string]interface{}{})
+	
+	// Register metrics types
+	gob.Register(metrics.MeasurementEnvelope{})
+	gob.Register(metrics.Measurements{})
+	gob.Register(map[string]string{})
+	
+	// Register request types
+	gob.Register(models.AuthRequest{})
+	gob.Register(SyncReq{})
 }
 
 func NewRPCWriter(ctx context.Context, address string) (*RPCWriter, error) {

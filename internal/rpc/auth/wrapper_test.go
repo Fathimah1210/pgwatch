@@ -60,7 +60,7 @@ func (m *MockReceiver) SyncMetric(data interface{}, reply *string) error {
 
 func TestAuthenticatedWrapper_ValidToken(t *testing.T) {
 	// Initialize token manager with a valid token
-	tm := auth.InitTokenManager(map[string]bool{
+	auth.InitTokenManager(map[string]bool{
 		"valid_token": true,
 	})
 	

@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"encoding/base64"
+	"sync"
 	"testing"
 	"time"
 
