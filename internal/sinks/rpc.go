@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cybertec-postgresql/pgwatch/v3/internal/auth_helper"
 	"github.com/cybertec-postgresql/pgwatch/v3/internal/log"
 	"github.com/cybertec-postgresql/pgwatch/v3/internal/metrics"
+	"github.com/cybertec-postgresql/pgwatch/v3/internal/rpc/models"
 )
 
 const (
@@ -18,6 +18,13 @@ const (
 	maxRetries        = 3
 	retryDelay        = 1 * time.Second
 )
+
+// SyncReq defines a request to sync metrics
+type SyncReq struct {
+	DBUnique   string
+	MetricName string
+	Operation  string
+}
 
 type RPCConfig struct {
 	Address     string
@@ -81,14 +88,14 @@ func (rw *RPCWriter) connect() error {
 	return err
 }
 
-func (rw *RPCWriter) Write(msgs []metrics.MeasurementMessage) error {
+func (rw *RPCWriter) Write(msgs []metrics.MeasurementEnvelope) error {
 	if err := rw.connect(); err != nil {
 		return err
 	}
 	defer rw.client.Close()
 
 	for _, msg := range msgs {
-		authReq := auth_helper.AuthRequest{
+		authReq := models.AuthRequest{
 			Token: rw.config.Token,
 			Data:  msg,
 		}
@@ -101,6 +108,34 @@ func (rw *RPCWriter) Write(msgs []metrics.MeasurementMessage) error {
 			}
 			return err
 		}
+	}
+	return nil
+}
+
+func (rw *RPCWriter) SyncMetric(dbUnique, metricName, op string) error {
+	if err := rw.connect(); err != nil {
+		return err
+	}
+	defer rw.client.Close()
+
+	syncReq := SyncReq{
+		DBUnique:   dbUnique,
+		MetricName: metricName,
+		Operation:  op,
+	}
+
+	authReq := models.AuthRequest{
+		Token: rw.config.Token,
+		Data:  syncReq,
+	}
+
+	var logMsg string
+	err := rw.client.Call("Receiver.SyncMetric", &authReq, &logMsg)
+	if err != nil {
+		if shouldRetry(err) {
+			return rw.SyncMetric(dbUnique, metricName, op) // Retry
+		}
+		return err
 	}
 	return nil
 }
