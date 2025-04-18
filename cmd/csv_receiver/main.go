@@ -1,15 +1,13 @@
-package main
+// Add to the main function after initializing token manager
+tokenFilePath := filepath.Join(cfg.StorageFolder, "tokens.json")
 
-import (
-	"log"
-)
+// Set the storage path
+auth.GetTokenManager().SetStoragePath(tokenFilePath)
 
-func main() {
-	// Parse configuration
-	cfg := ParseConfig()
-	
-	// Start server
-	if err := StartServer(cfg); err != nil {
-		log.Fatalf("Server error: %v", err)
-	}
+// Try to load existing tokens
+if err := auth.GetTokenManager().LoadTokens(); err != nil {
+    log.Printf("Warning: Failed to load tokens: %v", err)
 }
+
+// Enable auto-save
+auth.GetTokenManager().EnableAutoSave(true)

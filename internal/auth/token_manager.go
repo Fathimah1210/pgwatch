@@ -5,14 +5,39 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
 
+// Common errors
+var (
+	ErrInvalidToken     = errors.New("invalid token")
+	ErrExpiredToken     = errors.New("token expired")
+	ErrRateLimitExceeded = errors.New("rate limit exceeded")
+	ErrTokenStorageFailed = errors.New("failed to store tokens")
+)
+
+// TokenInfo stores metadata about a token
+type TokenInfo struct {
+	Value      string    `json:"value"`
+	Label      string    `json:"label"`
+	CreatedAt  time.Time `json:"created_at"`
+	ExpiresAt  time.Time `json:"expires_at,omitempty"`
+	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+	UsageCount int       `json:"usage_count"`
+	Revoked    bool      `json:"revoked"`
+}
+
 // TokenManager manages authentication tokens
 type TokenManager struct {
-	tokens map[string]TokenInfo
-	mu     sync.RWMutex
+	tokens     map[string]TokenInfo
+	mu         sync.RWMutex
+	storagePath string
+	autoSave   bool
 }
 
 var (
@@ -52,6 +77,69 @@ func GetTokenManager() *TokenManager {
 		return InitTokenManager(nil)
 	}
 	return defaultManager
+}
+
+// SetStoragePath sets the path for token persistence
+func (tm *TokenManager) SetStoragePath(path string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.storagePath = path
+}
+
+// EnableAutoSave enables automatic saving of tokens when changes occur
+func (tm *TokenManager) EnableAutoSave(enable bool) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.autoSave = enable
+}
+
+// SaveTokens saves tokens to a file
+func (tm *TokenManager) SaveTokens() error {
+	if tm.storagePath == "" {
+		return nil // No storage path set
+	}
+	
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	
+	// Ensure directory exists
+	dir := filepath.Dir(tm.storagePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return errors.Join(ErrTokenStorageFailed, err)
+	}
+	
+	// Marshal tokens to JSON
+	data, err := json.MarshalIndent(tm.tokens, "", "  ")
+	if err != nil {
+		return errors.Join(ErrTokenStorageFailed, err)
+	}
+	
+	// Write to file with secure permissions
+	return os.WriteFile(tm.storagePath, data, 0600)
+}
+
+// LoadTokens loads tokens from a file
+func (tm *TokenManager) LoadTokens() error {
+	if tm.storagePath == "" {
+		return nil // No storage path set
+	}
+	
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	
+	// Check if file exists
+	if _, err := os.Stat(tm.storagePath); os.IsNotExist(err) {
+		return nil // File doesn't exist yet, that's okay
+	}
+	
+	// Read file
+	data, err := os.ReadFile(tm.storagePath)
+	if err != nil {
+		return errors.Join(ErrTokenStorageFailed, err)
+	}
+	
+	// Unmarshal tokens
+	return json.Unmarshal(data, &tm.tokens)
 }
 
 // GenerateToken creates a cryptographically secure token
@@ -106,6 +194,11 @@ func (tm *TokenManager) RecordUsage(token string) {
 		info.LastUsedAt = time.Now()
 		info.UsageCount++
 		tm.tokens[token] = info
+		
+		if tm.autoSave {
+			// Save in a goroutine to not block the caller
+			go tm.SaveTokens()
+		}
 	}
 }
 
@@ -124,6 +217,11 @@ func (tm *TokenManager) AddToken(token, label string, expiresAt time.Time) error
 		Revoked:    false,
 	}
 	
+	if tm.autoSave {
+		// Save in a goroutine to not block the caller
+		go tm.SaveTokens()
+	}
+	
 	return nil
 }
 
@@ -135,6 +233,12 @@ func (tm *TokenManager) RevokeToken(token string) error {
 	if info, exists := tm.tokens[token]; exists {
 		info.Revoked = true
 		tm.tokens[token] = info
+		
+		if tm.autoSave {
+			// Save in a goroutine to not block the caller
+			go tm.SaveTokens()
+		}
+		
 		return nil
 	}
 	
@@ -153,4 +257,60 @@ func (tm *TokenManager) ListTokens() []TokenInfo {
 	}
 	
 	return result
+}
+
+// GetToken retrieves information about a specific token
+func (tm *TokenManager) GetToken(token string) (TokenInfo, error) {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	
+	if info, exists := tm.tokens[token]; exists {
+		return info, nil
+	}
+	
+	return TokenInfo{}, ErrInvalidToken
+}
+
+// GenerateAndAddToken creates a new token, adds it to the manager, and returns it
+func (tm *TokenManager) GenerateAndAddToken(label string, expiresInDays int) (string, error) {
+	// Generate a secure token
+	token, err := GenerateToken(32)
+	if err != nil {
+		return "", err
+	}
+	
+	// Calculate expiration time if needed
+	var expiresAt time.Time
+	if expiresInDays > 0 {
+		expiresAt = time.Now().AddDate(0, 0, expiresInDays)
+	}
+	
+	// Add the token
+	if err := tm.AddToken(token, label, expiresAt); err != nil {
+		return "", err
+	}
+	
+	return token, nil
+}
+
+// CleanupExpiredTokens removes expired tokens
+func (tm *TokenManager) CleanupExpiredTokens() int {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	
+	now := time.Now()
+	count := 0
+	
+	for token, info := range tm.tokens {
+		if !info.ExpiresAt.IsZero() && now.After(info.ExpiresAt) {
+			delete(tm.tokens, token)
+			count++
+		}
+	}
+	
+	if count > 0 && tm.autoSave {
+		go tm.SaveTokens()
+	}
+	
+	return count
 }
