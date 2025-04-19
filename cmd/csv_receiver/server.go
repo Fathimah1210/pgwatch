@@ -24,13 +24,44 @@ func StartServer(cfg Config) error {
 	}
 	defer auditLogger.Close()
 	
-	// Initialize token manager
-	if cfg.Token != "" {
-		auth.InitTokenManager(map[string]bool{
-			cfg.Token: true,
-		})
+	// Initialize token manager based on configuration
+	if cfg.UseJWT {
+		// Use JWT token manager with PostgreSQL
+		jwtSecret := []byte(cfg.JWTSecret)
+		if len(jwtSecret) == 0 {
+			jwtSecret = []byte("default-secret-change-in-production")
+			log.Println("WARNING: Using default JWT secret. This is not secure for production.")
+		}
+		
+		// Initialize JWT token manager
+		jwtManager, err := auth.InitJWTTokenManager(cfg.PGConnString, jwtSecret)
+		if err != nil {
+			return fmt.Errorf("failed to initialize JWT token manager: %w", err)
+		}
+		defer jwtManager.Close()
+		
+		// If initial token is provided, create a JWT token for it
+		if cfg.Token != "" {
+			// Create initial JWT token (instance name is "default" for backward compatibility)
+			_, err := jwtManager.GenerateToken("default", "Initial token", 0) // No expiration
+			if err != nil {
+				log.Printf("Warning: Failed to create initial JWT token: %v", err)
+			}
+		}
+		
+		// Set environment variable to signal use of JWT
+		os.Setenv("USE_JWT_AUTH", "true")
+		
 	} else {
-		auth.InitTokenManager(nil)
+		// Use original token manager
+		initialTokens := make(map[string]bool)
+		if cfg.Token != "" {
+			initialTokens[cfg.Token] = true
+		}
+		auth.InitTokenManager(initialTokens)
+
+		// Set environment variable to use legacy token manager
+		os.Setenv("USE_JWT_AUTH", "false")
 	}
 	
 	// Create receiver
@@ -57,7 +88,12 @@ func StartServer(cfg Config) error {
 	// Start server in a goroutine
 	serverErr := make(chan error, 1)
 	go func() {
-		log.Printf("Server started on %s (secure mode: %v)", listener.Addr(), !cfg.InsecureMode)
+		authMode := "legacy"
+		if cfg.UseJWT {
+			authMode = "JWT+PostgreSQL"
+		}
+		log.Printf("Server started on %s (auth mode: %s, secure mode: %v)", 
+			listener.Addr(), authMode, !cfg.InsecureMode)
 		serverErr <- http.Serve(listener, nil)
 	}()
 	
